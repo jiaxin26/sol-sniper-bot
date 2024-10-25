@@ -60,7 +60,7 @@ To run the script you need to:
 ## TAKE PROFIT
 
 > [!NOTE]
-> By default, 50 %
+> By default, 50 % 
 
 ## STOP LOSS
 
