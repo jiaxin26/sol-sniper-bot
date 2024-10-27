@@ -183,11 +183,19 @@ function saveTokenAccount(mint: PublicKey, accountData: MinimalMarketLayoutV3) {
 }
 
 export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStateV4) {
-  const shouldBuyResult = await shouldBuy(poolState.baseMint.toString());
-  if (!shouldBuyResult) {
+  if (!shouldBuy(poolState.baseMint.toString())) {
     return;
   }
-
+  // 获取当前代币的持有者数量
+  const holderCount = await getHolderCount(poolState.baseMint.toString());
+  if (holderCount === null) {
+    logger.warn({ mint: poolState.baseMint }, 'Holder count is unavailable, skipping purchase');
+    return;
+  }
+  if (holderCount < MIN_HOLDERS) {
+    logger.info({ mint: poolState.baseMint, holderCount }, `Holder count (${holderCount}) is below the minimum threshold (${MIN_HOLDERS}), skipping purchase`);
+    return;
+  }
   if (CHECK_IF_MINT_IS_RENOUNCED) {
     const mintOption = await checkMintable(poolState.baseMint);
 
@@ -196,7 +204,6 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
       return;
     }
   }
-
   await buy(id, poolState);
 }
 
@@ -436,40 +443,15 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish,
 //   return (bestAsk + bestBid) / 2;
 // }
 
-async function getHolderCount(mint: PublicKey): Promise<number | undefined> {
+async function getHolderCount(mintAddress: string): Promise<number | null> {
   try {
-    // 获取所有持有该代币的账户
-    const accounts = await solanaConnection.getProgramAccounts(
-      TOKEN_PROGRAM_ID,
-      {
-        filters: [
-          {
-            dataSize: 165, // Token account size
-          },
-          {
-            memcmp: {
-              offset: 0,
-              bytes: mint.toBase58(),
-            },
-          },
-        ],
-      }
-    );
-    // 过滤掉余额为 0 的账户
-    const activeAccounts = await Promise.all(
-      accounts.map(async (account) => {
-        const accountInfo = await solanaConnection.getTokenAccountBalance(account.pubkey);
-        return accountInfo.value.uiAmount! > 0;
-      })
-    );
-
-    const holderCount = activeAccounts.filter(Boolean).length;
-    logger.info({ mint: mint.toString(), holders: holderCount }, 'Token holder count');
-    
-    return holderCount;
-  } catch (e) {
-    logger.error({ mint: mint.toString(), error: e }, 'Failed to get holder count');
-    return undefined;
+    const response = await axios.get(`https://public-api.solscan.io/token/holders?token=${mintAddress}`);
+    // Solscan的API返回的数据结构可能有所不同，请根据实际响应调整
+    // 假设返回的数据包含一个 `total` 字段表示持有者数量
+    return response.data.total || null;
+  } catch (error) {
+    logger.error({ mint: mintAddress, error }, 'Failed to fetch holder count from Solscan');
+    return null;
   }
 }
 
