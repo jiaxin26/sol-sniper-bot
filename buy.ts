@@ -475,33 +475,7 @@ function loadSnipeList() {
 }
 
 async function shouldBuy(key: string): Promise<boolean> {
-  // 检查是否在狙击列表中
-  if (USE_SNIPE_LIST && !snipeList.includes(key)) {
-    return false;
-  }
-
-  try {
-    // 获取 holder 数量
-    const holderCount = await getHolderCount(new PublicKey(key));
-    
-    if (holderCount === undefined) {
-      logger.warn({ mint: key }, 'Unable to get holder count, skipping buy');
-      return false;
-    }
-
-    if (holderCount < MIN_HOLDERS) {
-      logger.info(
-        { mint: key, holders: holderCount, minRequired: MIN_HOLDERS },
-        'Holder count too low, skipping buy'
-      );
-      return false;
-    }
-
-    return true;
-  } catch (e) {
-    logger.error({ mint: key, error: e }, 'Error checking holder count');
-    return false;
-  }
+ return USE_SNIPE_LIST ? snipeList.includes(key) : true;
 }
 
 const runListener = async () => {
