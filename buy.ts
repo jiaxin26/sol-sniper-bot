@@ -453,7 +453,7 @@ async function getHolderCount(mintAddress: string): Promise<number> {
   const mintPublicKey = new PublicKey(mintAddress);
   
   // 使用getProgramAccounts获取所有与该Mint相关的Token账户
-  const tokenAccounts = await solanaConnection.getParsedTokenAccountsByOwner(
+  const tokenAccounts = await solanaConnection.getParsedTokenAccountsByMint(
     mintPublicKey,
     {
       programId: TOKEN_PROGRAM_ID,
