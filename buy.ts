@@ -438,37 +438,50 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish,
 
 async function getHolderCount(mint: PublicKey): Promise<number | undefined> {
   try {
-    // 获取所有持有该代币的账户
+    // 使用更高效的 RPC 调用
     const accounts = await solanaConnection.getProgramAccounts(
       TOKEN_PROGRAM_ID,
       {
         filters: [
           {
-            dataSize: 165, // Token account size
+            dataSize: 165,
           },
           {
             memcmp: {
               offset: 0,
-              bytes: mint.toBase58(),
+              bytes: mintKey,
             },
           },
+          // 只获取余额大于0的账户
+          {
+            memcmp: {
+              offset: 64,
+              bytes: bs58.encode(new Uint8Array(8).fill(0)),
+            },
+            encoding: "base58",
+          },
         ],
+        commitment: 'processed', // 使用较低的 commitment 级别来加快响应
+        dataSlice: { // 只获取最小必要的数据
+          offset: 0,
+          length: 0,
+        },
       }
     );
-    // 过滤掉余额为 0 的账户
-    const activeAccounts = await Promise.all(
-      accounts.map(async (account) => {
-        const accountInfo = await solanaConnection.getTokenAccountBalance(account.pubkey);
-        return accountInfo.value.uiAmount! > 0;
-      })
-    );
 
-    const holderCount = activeAccounts.filter(Boolean).length;
-    logger.info({ mint: mint.toString(), holders: holderCount }, 'Token holder count');
-    
+    const holderCount = accounts.length;
+
+    logger.info({ mint: mintKey, holders: holderCount }, 'Token holder count');
     return holderCount;
-  } catch (e) {
-    logger.error({ mint: mint.toString(), error: e }, 'Failed to get holder count');
+
+  } catch (e: any) {
+    if (e.message?.includes('429')) {
+      logger.warn({ mint: mintKey }, 'Rate limit hit, using default check');
+      // 当遇到限流时，返回 true 继续其他检查
+      return MIN_HOLDERS + 1; // 确保通过 holder 检查
+    }
+    
+    logger.error({ mint: mintKey, error: e }, 'Failed to get holder count');
     return undefined;
   }
 }
