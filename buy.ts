@@ -73,9 +73,10 @@ const RPC_ENDPOINT = retrieveEnvVariable('RPC_ENDPOINT', logger);
 const RPC_WEBSOCKET_ENDPOINT = retrieveEnvVariable('RPC_WEBSOCKET_ENDPOINT', logger);
 const MIN_HOLDERS = Number(retrieveEnvVariable('MIN_HOLDERS', logger));
 
-const solanaConnection = new Connection(RPC_ENDPOINT, {
-  wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
-});
+// const solanaConnection = new Connection(RPC_ENDPOINT, {
+//   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
+// });
+const solanaConnection = new Connection(RPC_ENDPOINT, 'confirmed');
 
 export type MinimalTokenAccountData = {
   mint: PublicKey;
@@ -188,16 +189,18 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
   if (!shouldBuy(poolState.baseMint.toString())) {
     return;
   }
+
   // 获取当前代币的持有者数量
   const holderCount = await getHolderCount(poolState.baseMint.toString());
-  if (holderCount === null) {
-    logger.warn({ mint: poolState.baseMint }, 'Holder count is unavailable, skipping purchase');
-    return;
-  }
+
   if (holderCount < MIN_HOLDERS) {
-    logger.info({ mint: poolState.baseMint, holderCount }, `Holder count (${holderCount}) is below the minimum threshold (${MIN_HOLDERS}), skipping purchase`);
+    logger.info(
+      { mint: poolState.baseMint, holderCount },
+      `Holder count (${holderCount}) is below the minimum threshold (${MIN_HOLDERS}), skipping purchase`,
+    );
     return;
   }
+
   if (CHECK_IF_MINT_IS_RENOUNCED) {
     const mintOption = await checkMintable(poolState.baseMint);
 
@@ -206,6 +209,7 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
       return;
     }
   }
+
   await buy(id, poolState);
 }
 
@@ -445,16 +449,30 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish,
 //   return (bestAsk + bestBid) / 2;
 // }
 
-async function getHolderCount(mintAddress: string): Promise<number | null> {
-  try {
-    const response = await axios.get(`https://public-api.solscan.io/token/holders?token=${mintAddress}`);
-    // Solscan的API返回的数据结构可能有所不同，请根据实际响应调整
-    // 假设返回的数据包含一个 `total` 字段表示持有者数量
-    return response.data.total || null;
-  } catch (error) {
-    logger.error({ mint: mintAddress, error }, 'Failed to fetch holder count from Solscan');
-    return null;
+async function getHolderCount(mintAddress: string): Promise<number> {
+  const mintPublicKey = new PublicKey(mintAddress);
+  
+  // 使用getProgramAccounts获取所有与该Mint相关的Token账户
+  const tokenAccounts = await solanaConnection.getParsedTokenAccountsByOwner(
+    mintPublicKey,
+    {
+      programId: TOKEN_PROGRAM_ID,
+    },
+  );
+
+  // 统计拥有非零余额的唯一持有者数量
+  const holders = new Set<string>();
+  
+  for (const { pubkey, account } of tokenAccounts.value) {
+    const amount = account.data.parsed.info.tokenAmount.uiAmount;
+    if (amount && amount > 0) {
+      holders.add(account.data.parsed.info.owner);
+    }
   }
+
+  const holderCount = holders.size;
+  logger.info(`Token ${mintAddress} has ${holderCount} holders.`);
+  return holderCount;
 }
 
 function loadSnipeList() {
