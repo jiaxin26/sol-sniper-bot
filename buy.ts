@@ -69,6 +69,7 @@ export const logger = pino(
 const network = 'mainnet-beta';
 const RPC_ENDPOINT = retrieveEnvVariable('RPC_ENDPOINT', logger);
 const RPC_WEBSOCKET_ENDPOINT = retrieveEnvVariable('RPC_WEBSOCKET_ENDPOINT', logger);
+const MIN_HOLDERS = Number(retrieveEnvVariable('MIN_HOLDERS', logger));
 
 const solanaConnection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -182,7 +183,8 @@ function saveTokenAccount(mint: PublicKey, accountData: MinimalMarketLayoutV3) {
 }
 
 export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStateV4) {
-  if (!shouldBuy(poolState.baseMint.toString())) {
+  const shouldBuyResult = await shouldBuy(poolState.baseMint.toString());
+  if (!shouldBuyResult) {
     return;
   }
 
@@ -434,6 +436,43 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish,
 //   return (bestAsk + bestBid) / 2;
 // }
 
+async function getHolderCount(mint: PublicKey): Promise<number | undefined> {
+  try {
+    // 获取所有持有该代币的账户
+    const accounts = await solanaConnection.getProgramAccounts(
+      TOKEN_PROGRAM_ID,
+      {
+        filters: [
+          {
+            dataSize: 165, // Token account size
+          },
+          {
+            memcmp: {
+              offset: 0,
+              bytes: mint.toBase58(),
+            },
+          },
+        ],
+      }
+    );
+    // 过滤掉余额为 0 的账户
+    const activeAccounts = await Promise.all(
+      accounts.map(async (account) => {
+        const accountInfo = await solanaConnection.getTokenAccountBalance(account.pubkey);
+        return accountInfo.value.uiAmount! > 0;
+      })
+    );
+
+    const holderCount = activeAccounts.filter(Boolean).length;
+    logger.info({ mint: mint.toString(), holders: holderCount }, 'Token holder count');
+    
+    return holderCount;
+  } catch (e) {
+    logger.error({ mint: mint.toString(), error: e }, 'Failed to get holder count');
+    return undefined;
+  }
+}
+
 function loadSnipeList() {
   if (!USE_SNIPE_LIST) {
     return;
@@ -452,7 +491,33 @@ function loadSnipeList() {
 }
 
 function shouldBuy(key: string): boolean {
-  return USE_SNIPE_LIST ? snipeList.includes(key) : true;
+    // 检查是否在狙击列表中
+  if (USE_SNIPE_LIST && !snipeList.includes(key)) {
+    return false;
+  }
+
+  try {
+    // 获取 holder 数量
+    const holderCount = await getHolderCount(new PublicKey(key));
+    
+    if (holderCount === undefined) {
+      logger.warn({ mint: key }, 'Unable to get holder count, skipping buy');
+      return false;
+    }
+
+    if (holderCount < MIN_HOLDERS) {
+      logger.info(
+        { mint: key, holders: holderCount, minRequired: MIN_HOLDERS },
+        'Holder count too low, skipping buy'
+      );
+      return false;
+    }
+
+    return true;
+  } catch (e) {
+    logger.error({ mint: key, error: e }, 'Error checking holder count');
+    return false;
+  }
 }
 
 const runListener = async () => {
