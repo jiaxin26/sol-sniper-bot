@@ -490,7 +490,7 @@ function loadSnipeList() {
   }
 }
 
-function shouldBuy(key: string): boolean {
+async function shouldBuy(key: string): boolean {
     // 检查是否在狙击列表中
   if (USE_SNIPE_LIST && !snipeList.includes(key)) {
     return false;
